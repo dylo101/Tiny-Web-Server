@@ -7,31 +7,87 @@
 #define PORT 8080
 #define BUFFER_SIZE 1024
 
-// Minimal HTTP response header to send a 200 OK header
-void send_ok_header(int client)
+const char *get_mime_type(const char *path)
 {
-    const char *hdr = "HTTP/1.1 200 OK\r\n"
-                      "Content-Type: text/html\r\n"
-                      "\r\n";
+    const char *ext = strrchr(path, '.');
+
+    if (!ext)
+    {
+        return "application/octet-stream";
+    }
+
+    if (strcmp(ext, ".html") == 0) return "text/html";
+    if (strcmp(ext, ".css") == 0) return "text/css";
+    if (strcmp(ext, ".js") == 0) return "application/javascript";
+    if (strcmp(ext, ".png") == 0) return "image/png";
+    if (strcmp(ext, ".jpg") == 0) return "image/jpeg";
+    if (strcmp(ext, ".jpeg") == 0) return "image/jpeg";
+    if (strcmp(ext, ".gif") == 0) return "image/gif";
+    if (strcmp(ext, ".txt") == 0) return "text/plain";
+
+    return "application/octet-stream";
+}
+
+void send_404(int client)
+{
+    const char *body = "<h1>404 Not Found</h1>";
+
+    char hdr[256];
+    snprintf(hdr, sizeof(hdr),
+             "HTTP/1.1 404 Not Found\r\n"
+             "Content-Type: text/html\r\n"
+             "Content-Length: %zu\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             strlen(body));
+
+    send(client, hdr, strlen(hdr), 0);
+    send(client, body, strlen(body), 0);
+}
+
+// Minimal HTTP response header to send a 200 OK header
+void send_ok_header(int client, const char *mime_type)
+{
+    char hdr[256];
+
+    snprintf(hdr, sizeof(hdr),
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: %s\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             mime_type);
+
     send(client, hdr , strlen(hdr), 0);
 }
 
 // Send the file body
-void send_file(int client, const char *path)
+void send_file(int client, FILE *f)
 {
-    FILE *f = fopen(path, "r");
-    if(!f)
-    {
-        perror("open html");
-        return;
-    }
     char buf[BUFFER_SIZE];
     size_t n;
-    while((n = fread(buf, 1, sizeof buf, f)) > 0) 
+
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
     {
         send(client, buf, n, 0);
     }
-    fclose(f);
+}
+
+void get_requested_path(const char *request, char *path, size_t path_size)
+{
+    char method[16];
+    char url[256];
+
+    sscanf(request, "%15s %255s", method, url);
+
+    if (strcmp(url, "/") == 0)
+    {
+        snprintf(path, path_size, "index.html");
+    }
+    else
+    {
+        // Skip the leading '/'
+        snprintf(path, path_size, ".%s", url);
+    }
 }
 
 int main() 
@@ -79,19 +135,46 @@ int main()
         struct sockaddr_in cli;
         socklen_t len = sizeof cli;
         int client = accept(server_fd, (struct sockaddr*)&cli, &len);
+ 
         if(client < 0)
         {
             perror("accept");
             continue;
         }
         char request[BUFFER_SIZE];
-        recv(client, request, sizeof(request) - 1, 0);
-        
+        int bytes = recv(client, request, sizeof(request) - 1, 0);
+
+        if(bytes <= 0)
+        {
+            close(client);
+            continue;
+        }
+        request[bytes] = '\0';
+        printf("Request:\n%s\n", request);
+
+        char path[512];
+        get_requested_path(request, path, sizeof(path));
+        printf("Requested file: %s\n", path); 
+          
         printf("Client connected\n");
-        send_ok_header(client);
-        send_file(client, "index.html");
+
+        FILE *f = fopen(path, "rb");
+
+        if(!f)
+        {
+            send_404(client);
+            close(client);
+            printf("Client disconnected\n");
+            continue;
+        }
+
+        const char *mime_type = get_mime_type(path);
+        send_ok_header(client, mime_type);
+        send_file(client, f);
+
+        fclose(f);
+
         printf("Client disconnected\n");
-        // Every new connection gets headers + file
         close(client);
     }
 }
