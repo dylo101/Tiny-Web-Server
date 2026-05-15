@@ -7,6 +7,27 @@
 #define PORT 8080
 #define BUFFER_SIZE 1024
 
+const char *get_mime_type(const char *path)
+{
+    const char *ext = strrchr(path, '.');
+
+    if (!ext)
+    {
+        return "application/octet-stream";
+    }
+
+    if (strcmp(ext, ".html") == 0) return "text/html";
+    if (strcmp(ext, ".css") == 0) return "text/css";
+    if (strcmp(ext, ".js") == 0) return "application/javascript";
+    if (strcmp(ext, ".png") == 0) return "image/png";
+    if (strcmp(ext, ".jpg") == 0) return "image/jpeg";
+    if (strcmp(ext, ".jpeg") == 0) return "image/jpeg";
+    if (strcmp(ext, ".gif") == 0) return "image/gif";
+    if (strcmp(ext, ".txt") == 0) return "text/plain";
+
+    return "application/octet-stream";
+}
+
 void send_404(int client)
 {
     const char *body = "<h1>404 Not Found</h1>";
@@ -25,11 +46,17 @@ void send_404(int client)
 }
 
 // Minimal HTTP response header to send a 200 OK header
-void send_ok_header(int client)
+void send_ok_header(int client, const char *mime_type)
 {
-    const char *hdr = "HTTP/1.1 200 OK\r\n"
-                      "Content-Type: text/html\r\n"
-                      "\r\n";
+    char hdr[256];
+
+    snprintf(hdr, sizeof(hdr),
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: %s\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             mime_type);
+
     send(client, hdr , strlen(hdr), 0);
 }
 
@@ -141,7 +168,8 @@ int main()
             continue;
         }
 
-        send_ok_header(client);
+        const char *mime_type = get_mime_type(path);
+        send_ok_header(client, mime_type);
         send_file(client, f);
 
         fclose(f);
