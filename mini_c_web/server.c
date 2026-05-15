@@ -7,6 +7,23 @@
 #define PORT 8080
 #define BUFFER_SIZE 1024
 
+void send_404(int client)
+{
+    const char *body = "<h1>404 Not Found</h1>";
+
+    char hdr[256];
+    snprintf(hdr, sizeof(hdr),
+             "HTTP/1.1 404 Not Found\r\n"
+             "Content-Type: text/html\r\n"
+             "Content-Length: %zu\r\n"
+             "Connection: close\r\n"
+             "\r\n",
+             strlen(body));
+
+    send(client, hdr, strlen(hdr), 0);
+    send(client, body, strlen(body), 0);
+}
+
 // Minimal HTTP response header to send a 200 OK header
 void send_ok_header(int client)
 {
@@ -17,21 +34,33 @@ void send_ok_header(int client)
 }
 
 // Send the file body
-void send_file(int client, const char *path)
+void send_file(int client, FILE *f)
 {
-    FILE *f = fopen(path, "r");
-    if(!f)
-    {
-        perror("open html");
-        return;
-    }
     char buf[BUFFER_SIZE];
     size_t n;
-    while((n = fread(buf, 1, sizeof buf, f)) > 0) 
+
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
     {
         send(client, buf, n, 0);
     }
-    fclose(f);
+}
+
+void get_requested_path(const char *request, char *path, size_t path_size)
+{
+    char method[16];
+    char url[256];
+
+    sscanf(request, "%15s %255s", method, url);
+
+    if (strcmp(url, "/") == 0)
+    {
+        snprintf(path, path_size, "index.html");
+    }
+    else
+    {
+        // Skip the leading '/'
+        snprintf(path, path_size, ".%s", url);
+    }
 }
 
 int main() 
@@ -79,19 +108,45 @@ int main()
         struct sockaddr_in cli;
         socklen_t len = sizeof cli;
         int client = accept(server_fd, (struct sockaddr*)&cli, &len);
+ 
         if(client < 0)
         {
             perror("accept");
             continue;
         }
         char request[BUFFER_SIZE];
-        recv(client, request, sizeof(request) - 1, 0);
-        
+        int bytes = recv(client, request, sizeof(request) - 1, 0);
+
+        if(bytes <= 0)
+        {
+            close(client);
+            continue;
+        }
+        request[bytes] = '\0';
+        printf("Request:\n%s\n", request);
+
+        char path[512];
+        get_requested_path(request, path, sizeof(path));
+        printf("Requested file: %s\n", path); 
+          
         printf("Client connected\n");
+
+        FILE *f = fopen(path, "rb");
+
+        if(!f)
+        {
+            send_404(client);
+            close(client);
+            printf("Client disconnected\n");
+            continue;
+        }
+
         send_ok_header(client);
-        send_file(client, "index.html");
+        send_file(client, f);
+
+        fclose(f);
+
         printf("Client disconnected\n");
-        // Every new connection gets headers + file
         close(client);
     }
 }
